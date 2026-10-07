@@ -77,7 +77,9 @@
 
 <body>
   <h1>Quản lý Sách</h1>
-
+    {{#if sessionViews}}
+  <p>Số lần xem trang trong phiên hiện tại: {{sessionViews}}</p>
+{{/if}}
   <section>
     <h2>Thêm sách</h2>
     <p>Mã sách phải bắt đầu bằng {{codePrefix}}.</p>
