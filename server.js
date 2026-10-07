@@ -1,5 +1,6 @@
 require('dotenv').config();
-
+const session = require('express-session');
+const AtlasSessionStore = require('./atlas-session-store');
 const express = require('express');
 const path = require('path');
 const { engine } = require('express-handlebars');
@@ -21,7 +22,7 @@ if (!studentName || !studentId || !/\d{3}$/.test(studentId)) {
 }
 
 const codePrefix = studentId.slice(-3);
-const vatPercent = Number(studentId.slice(-1)) + 5;
+const vatPercent = Number(studentId.slice(-1)) + 6;
 
 app.engine('handlebars', engine({
   defaultLayout: false,
@@ -36,7 +37,29 @@ app.set('view engine', 'handlebars');
 app.set('views', path.join(__dirname, 'views'));
 
 app.use(express.urlencoded({ extended: false }));
+if (!process.env.SESSION_SECRET) {
+  throw new Error('Thiếu SESSION_SECRET trong .env');
+}
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isProduction) {
+  app.set('trust proxy', 1);
+}
+
+app.use(session({
+  name: 'book.sid',
+  secret: process.env.SESSION_SECRET,
+  store: new AtlasSessionStore(),
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: 'lax',
+    maxAge: 24 * 60 * 60 * 1000
+  }
+}));
 app.locals.studentName = studentName;
 app.locals.studentId = studentId;
 app.locals.codePrefix = codePrefix;
@@ -55,7 +78,22 @@ async function renderBooks(res, options = {}) {
 
 app.get('/', async (req, res, next) => {
   try {
-    await renderBooks(res);
+    req.session.views = (req.session.views || 0) + 1;
+
+    // Chờ Atlas lưu xong; nếu lỗi sẽ chuyển tới error handler.
+    await new Promise((resolve, reject) => {
+      req.session.save((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+
+    await renderBooks(res, {
+      sessionViews: req.session.views
+    });
   } catch (error) {
     next(error);
   }
@@ -114,10 +152,15 @@ app.post('/books', async (req, res, next) => {
 });
 
 app.use((error, req, res, next) => {
-  console.error('Lỗi xử lý:', error.name, error.code || '');
+  const safeMessage = String(error.message || '')
+    .replace(/mongodb(?:\+srv)?:\/\/[^\s]+/gi, '[URI đã ẩn]');
+
+  console.error('Loại lỗi:', error.name);
+  console.error('Mã lỗi:', error.code || 'N/A');
+  console.error('Chi tiết:', safeMessage);
 
   res.status(500).send(
-    'Không thể xử lý yêu cầu. Kiểm tra terminal và cấu hình Atlas.'
+    'Không thể xử lý yêu cầu. Xem chi tiết trong terminal.'
   );
 });
 
